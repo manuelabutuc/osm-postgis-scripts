@@ -1,5 +1,5 @@
 --select closed ways that are navigable roads and usually have roundabouts
-create table closed_roads as
+create table possible_roundabouts as
 (select * from ways 
 where ST_IsClosed(linestring)='t'
 and (tags->'highway'='secondary' 
@@ -18,30 +18,36 @@ or tags->'highway'='undefined'
 or tags->'highway'='unknown'
 or tags->'highway'='living_street'));
 
+
 --delete ways that already have the roundabout tags
-delete from closed_roads where tags->'junction'='roundabout';
+delete from possible_roundabouts 
+where tags->'junction'='roundabout'
+or tags->'highway'='mini_roundabout'
+or tags->'highway'='turning_circle'
+or tags->'highway'='turning_loop';
 
 --delete long ways (more than 400 m)
-delete from closed_roads 
+delete from possible_roundabouts 
 where id in(
 select id
-from closed_roads
-where ST_Length(ST_Transform(linestring,3857))>400);
+from possible_roundabouts
+where ST_Length(ST_Transform(linestring,3857))>400)
+or ST_Length(ST_Transform(linestring,3857))<55;
 
 --delete ways inappropriate number of nodes
-delete from closed_roads 
+delete from possible_roundabouts 
 where id in (
 select way_id
 from way_nodes 
 group by way_id 
-having count(way_id)>45or count(way_id)<8);
+having count(way_id)>45 or count(way_id)<8);
 
 --distance centroid -> nodes
 create table dist_centroid as (SELECT t.id as way_id,
        ST_Centroid(t.linestring) AS center,
        avg(ST_Distance(dump.geom, ST_Centroid(t.linestring))*1000) AS distance,
        dump.path AS path
-FROM closed_roads as t
+FROM possible_roundabouts as t
 JOIN ST_DumpPoints(t.linestring) dump ON true
 GROUP BY 1, 2, 4
 ORDER BY 1);
@@ -53,7 +59,7 @@ FROM dist_centroid
 GROUP BY way_id);
 
 --delete the ways that have a high deviation for centroid -> nodes distance
-delete from closed_roads 
+delete from possible_roundabouts 
 where id in 
 (select way_id
 from stddev_centroid
@@ -64,7 +70,7 @@ create table line_to_segment as(
 WITH 
   sample AS 
      
-       (select * from closed_roads
+       (select * from possible_roundabouts
      ),
   line_counts(cts, id) AS 
         (SELECT ST_NPoints(linestring) -1 , id FROM sample),
@@ -91,7 +97,7 @@ FROM line_to_segment
 GROUP BY id);
 
 --delete ways that have unequal distance between nodes
-delete from closed_roads 
+delete from possible_roundabouts 
 where id in
 (select id from stddev_nodes 
 where deviation>9);
@@ -158,21 +164,34 @@ END
 $$ LANGUAGE 'plpgsql' IMMUTABLE;
 
 
-
-
 --delete the ways with sharp angles
-delete from closed_roads where id in 
-(select id from closed_roads
+delete from possible_roundabouts where id in 
+(select id from possible_roundabouts
 where max_degree(linestring)>36);
 
 --create table with the number of intersections each roundabout has
 CREATE TABLE intersection_points as
 SELECT
-a.id,
+a.id, 
     Count(ST_Intersection(a.linestring, b.linestring)) as intersections
 FROM
-   closed_roads as a,
-   ways as b
+	possible_roundabouts as a,
+	(select * from ways where
+	tags->'highway'='secondary' 
+	or tags->'highway'='secondary_link'
+	or tags->'highway'='tertiary'
+	or tags->'highway'='tertiary_link'
+	or tags->'highway'='residential'
+	or tags->'highway'='residential_link'
+	or tags->'highway'='driveway'
+	or tags->'highway'='unclassified'
+	or tags->'highway'='service'
+	or tags->'highway'='rest_area'
+	or tags->'highway'='road'
+	or tags->'highway'='track'
+	or tags->'highway'='undefined'
+	or tags->'highway'='unknown'
+	or tags->'highway'='living_street') as b
 WHERE
     ST_Touches(a.linestring, b.linestring)
     AND a.id != b.id
@@ -180,7 +199,47 @@ GROUP BY
 a.id;
 
 --delete the ways that have only one intersection
-delete from closed_roads where id in (select id from intersection_points where intersections<2);
+delete from possible_roundabouts where id in (select id from intersection_points where intersections<3);
+
+
+-- delete intersections where turning loops, turning circles, or mini roundabouts appear
+CREATE TABLE intersection_points1 as
+SELECT
+a.id, ST_Intersection(a.linestring, b.linestring)
+    
+FROM
+   possible_roundabouts as a,
+   (select * from ways where
+   tags->'highway'='secondary' 
+	or tags->'highway'='secondary_link'
+	or tags->'highway'='tertiary'
+	or tags->'highway'='tertiary_link'
+	or tags->'highway'='residential'
+	or tags->'highway'='residential_link'
+	or tags->'highway'='driveway'
+	or tags->'highway'='unclassified'
+	or tags->'highway'='service'
+	or tags->'highway'='rest_area'
+	or tags->'highway'='road'
+	or tags->'highway'='track'
+	or tags->'highway'='undefined'
+	or tags->'highway'='unknown'
+	or tags->'highway'='living_street') as b
+WHERE
+    ST_Touches(a.linestring, b.linestring)
+    AND a.id != b.id;
+
+	
+delete from possible_roundabouts 
+where id in 
+(select id 
+from intersection_points1 
+where st_intersection in 
+(select geom from nodes 
+where tags->'highway'='turning_loop' 
+or tags->'highway'='turning_circle' 
+or tags->'highway'='mini_roundabout'));
+
 
 --delete intermediate tables
 drop table dist_centroid;
@@ -188,4 +247,4 @@ drop table stddev_centroid;
 drop table line_to_segment;
 drop table stddev_nodes;
 drop table intersection_points;
-
+drop table intersection_points1;
