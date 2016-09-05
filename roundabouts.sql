@@ -106,7 +106,6 @@ where deviation>9);
 
 
 --function to calculate angle between every 3 consecutive nodes of a way
-DROP FUNCTION IF EXISTS max_degree(way geometry);
 CREATE OR REPLACE FUNCTION max_degree(way geometry)
   RETURNS NUMERIC
   AS
@@ -248,3 +247,5 @@ drop table line_to_segment;
 drop table stddev_nodes;
 drop table intersection_points;
 drop table intersection_points1;
+
+DROP FUNCTION max_degree(way geometry);
