@@ -16,3 +16,4 @@ from relations
 where tags->'type'='restriction' 
 and tags ?'restriction' 
 and tags ?'restriction:conditional'));
+
