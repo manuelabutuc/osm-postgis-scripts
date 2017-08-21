@@ -249,3 +249,4 @@ drop table intersection_points;
 drop table intersection_points1;
 
 DROP FUNCTION max_degree(way geometry);
+
